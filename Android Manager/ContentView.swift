@@ -229,7 +229,7 @@ struct ContentView: View {
                 } label: {
                     Label("Add Files", systemImage: "plus")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .disabled(isTransferring)
 
                 Button {
