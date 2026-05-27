@@ -161,8 +161,6 @@ struct ContentView: View {
 
     private var transferWorkspace: some View {
         VStack(spacing: 0) {
-            header
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     transferSummary
@@ -183,37 +181,6 @@ struct ContentView: View {
                 endPoint: .bottomTrailing
             )
         )
-    }
-
-    private var header: some View {
-        HStack(spacing: 16) {
-            Image(systemName: "arrow.up.doc.on.clipboard")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(.blue)
-                .frame(width: 52, height: 52)
-                .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Transfer files")
-                    .font(.title2.weight(.semibold))
-
-                Text("Send documents, media, and folders to your Android phone.")
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button {
-                isShowingFilePicker = true
-            } label: {
-                Label("Add Files", systemImage: "plus")
-            }
-            .buttonStyle(.bordered)
-
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 18)
-        .liquidGlassPanel(cornerRadius: 0)
     }
 
     private var transferSummary: some View {
