@@ -29,10 +29,6 @@ struct ContentView: View {
     @State private var deviceNameDraft = ""
     @State private var deviceMessage = "Connect your Android phone in File Transfer mode."
 
-    private var readyItems: [TransferItem] {
-        transferItems.filter { $0.status != .complete && $0.sourceURL != nil }
-    }
-
     private var totalSize: Int64 {
         transferItems.reduce(0) { $0 + $1.size }
     }
@@ -214,13 +210,9 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
 
-            Button {
-                Task { await startTransfer() }
-            } label: {
-                Label(isTransferring ? "Transferring" : "Transfer", systemImage: "paperplane.fill")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isTransferring || readyItems.isEmpty || selectedDevice == nil)
+            Label(isTransferring ? "Transferring" : "Auto transfer", systemImage: isTransferring ? "arrow.triangle.2.circlepath" : "bolt.fill")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(isTransferring ? .blue : .secondary)
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 18)
@@ -263,7 +255,7 @@ struct ContentView: View {
     private var fileQueue: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Queue")
+                Text("History")
                     .font(.headline)
 
                 Spacer()
@@ -311,10 +303,10 @@ struct ContentView: View {
                 .font(.system(size: 34, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            Text("No files selected")
+            Text("No transfer history")
                 .font(.headline)
 
-            Text("Drop files here or choose them from Finder.")
+            Text("Drop or choose files to transfer immediately.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
@@ -358,6 +350,10 @@ struct ContentView: View {
         }
 
         transferItems.append(contentsOf: importedItems)
+
+        Task {
+            await startTransfer()
+        }
     }
 
     private func fileSize(for url: URL) -> Int64 {
@@ -466,18 +462,18 @@ struct ContentView: View {
     }
 
     private func startTransfer() async {
+        guard !isTransferring else { return }
+
         isTransferring = true
         defer { isTransferring = false }
 
-        let itemIDs = transferItems.map(\.id)
-
-        for itemID in itemIDs {
-            guard let itemIndex = transferItems.firstIndex(where: { $0.id == itemID }) else {
-                continue
-            }
-
-            guard transferItems[itemIndex].status != .complete else {
-                continue
+        while let itemIndex = transferItems.firstIndex(where: { $0.status == .queued }) {
+            guard selectedDevice != nil else {
+                for queuedIndex in transferItems.indices where transferItems[queuedIndex].status == .queued {
+                    transferItems[queuedIndex].status = .failed
+                    transferItems[queuedIndex].errorMessage = "Connect an MTP device before transferring."
+                }
+                break
             }
 
             guard let sourceURL = transferItems[itemIndex].sourceURL else {
