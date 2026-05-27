@@ -210,9 +210,6 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
 
-            Label(isTransferring ? "Transferring" : "Auto transfer", systemImage: isTransferring ? "arrow.triangle.2.circlepath" : "bolt.fill")
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(isTransferring ? .blue : .secondary)
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 18)
@@ -259,6 +256,14 @@ struct ContentView: View {
                     .font(.headline)
 
                 Spacer()
+
+                Button {
+                    isShowingFilePicker = true
+                } label: {
+                    Label("Add Files", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .disabled(isTransferring)
 
                 Button {
                     transferItems.removeAll()
