@@ -9,6 +9,10 @@ import SwiftUI
 import Foundation
 import UniformTypeIdentifiers
 
+#if canImport(GRDB)
+import GRDB
+#endif
+
 struct ContentView: View {
     @State private var connectedDevices: [AndroidDevice] = []
     @State private var selectedDevice: AndroidDevice?
@@ -529,6 +533,175 @@ private enum MoveDirection {
     case down
 }
 
+#if canImport(GRDB)
+private struct DeviceDatabase {
+    var selectedDeviceID: String?
+    var devices: [DeviceRecord]
+    private let databaseQueue: DatabaseQueue?
+
+    static func load() -> DeviceDatabase {
+        do {
+            try FileManager.default.createDirectory(at: databaseDirectoryURL, withIntermediateDirectories: true)
+
+            let databaseQueue = try DatabaseQueue(path: databaseURL.path)
+            try migrator.migrate(databaseQueue)
+
+            let devices = try databaseQueue.read { db in
+                try Row.fetchAll(db, sql: "SELECT id, customName, sortIndex FROM devices ORDER BY sortIndex")
+                    .map { row in
+                        DeviceRecord(
+                            id: row["id"],
+                            customName: row["customName"],
+                            sortIndex: row["sortIndex"]
+                        )
+                    }
+            }
+
+            let selectedDeviceID = try databaseQueue.read { db in
+                try String.fetchOne(db, sql: "SELECT value FROM appSettings WHERE key = ?", arguments: ["selectedDeviceID"])
+            }
+
+            return DeviceDatabase(selectedDeviceID: selectedDeviceID, devices: devices, databaseQueue: databaseQueue)
+        } catch {
+            assertionFailure("Failed to load GRDB device database: \(error.localizedDescription)")
+            return DeviceDatabase(selectedDeviceID: nil, devices: [], databaseQueue: nil)
+        }
+    }
+
+    mutating func register(_ detectedDevices: [AndroidDevice]) -> Bool {
+        var didChange = false
+        var nextSortIndex = (devices.map(\.sortIndex).max() ?? -1) + 1
+
+        for device in detectedDevices where recordIndex(for: device.id) == nil {
+            devices.append(DeviceRecord(id: device.id, customName: nil, sortIndex: nextSortIndex))
+            nextSortIndex += 1
+            didChange = true
+        }
+
+        return didChange
+    }
+
+    func customName(for deviceID: String) -> String? {
+        devices.first { $0.id == deviceID }?.customName
+    }
+
+    func sortIndex(for deviceID: String) -> Int? {
+        devices.first { $0.id == deviceID }?.sortIndex
+    }
+
+    mutating func renameDevice(id: String, to name: String) {
+        ensureRecordExists(for: id)
+
+        guard let index = recordIndex(for: id) else { return }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        devices[index].customName = trimmedName.isEmpty ? nil : trimmedName
+    }
+
+    mutating func moveDevice(id: String, direction: MoveDirection, orderedDeviceIDs: [String]) {
+        guard let currentIndex = orderedDeviceIDs.firstIndex(of: id) else { return }
+
+        let destinationIndex: Int
+        switch direction {
+        case .up:
+            destinationIndex = max(orderedDeviceIDs.startIndex, currentIndex - 1)
+        case .down:
+            destinationIndex = min(orderedDeviceIDs.index(before: orderedDeviceIDs.endIndex), currentIndex + 1)
+        }
+
+        guard currentIndex != destinationIndex else { return }
+
+        var reorderedIDs = orderedDeviceIDs
+        let movedID = reorderedIDs.remove(at: currentIndex)
+        reorderedIDs.insert(movedID, at: destinationIndex)
+
+        for (sortIndex, deviceID) in reorderedIDs.enumerated() {
+            ensureRecordExists(for: deviceID)
+
+            if let recordIndex = recordIndex(for: deviceID) {
+                devices[recordIndex].sortIndex = sortIndex
+            }
+        }
+    }
+
+    func save() {
+        guard let databaseQueue else { return }
+
+        do {
+            try databaseQueue.write { db in
+                for device in devices {
+                    try db.execute(
+                        sql: """
+                        INSERT INTO devices (id, customName, sortIndex)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            customName = excluded.customName,
+                            sortIndex = excluded.sortIndex
+                        """,
+                        arguments: [device.id, device.customName, device.sortIndex]
+                    )
+                }
+
+                if let selectedDeviceID {
+                    try db.execute(
+                        sql: """
+                        INSERT INTO appSettings (key, value)
+                        VALUES (?, ?)
+                        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                        """,
+                        arguments: ["selectedDeviceID", selectedDeviceID]
+                    )
+                } else {
+                    try db.execute(sql: "DELETE FROM appSettings WHERE key = ?", arguments: ["selectedDeviceID"])
+                }
+            }
+        } catch {
+            assertionFailure("Failed to save GRDB device database: \(error.localizedDescription)")
+        }
+    }
+
+    private mutating func ensureRecordExists(for id: String) {
+        guard recordIndex(for: id) == nil else { return }
+
+        let nextSortIndex = (devices.map(\.sortIndex).max() ?? -1) + 1
+        devices.append(DeviceRecord(id: id, customName: nil, sortIndex: nextSortIndex))
+    }
+
+    private func recordIndex(for id: String) -> Int? {
+        devices.firstIndex { $0.id == id }
+    }
+
+    private static var databaseDirectoryURL: URL {
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
+
+        return baseURL.appendingPathComponent("Android Manager", isDirectory: true)
+    }
+
+    private static var databaseURL: URL {
+        databaseDirectoryURL.appendingPathComponent("device-database.sqlite")
+    }
+
+    private static var migrator: DatabaseMigrator {
+        var migrator = DatabaseMigrator()
+
+        migrator.registerMigration("createDeviceStorage") { db in
+            try db.create(table: "devices", ifNotExists: true) { table in
+                table.column("id", .text).primaryKey()
+                table.column("customName", .text)
+                table.column("sortIndex", .integer).notNull()
+            }
+
+            try db.create(table: "appSettings", ifNotExists: true) { table in
+                table.column("key", .text).primaryKey()
+                table.column("value", .text)
+            }
+        }
+
+        return migrator
+    }
+}
+#else
 private struct DeviceDatabase: Codable {
     var selectedDeviceID: String?
     var devices: [DeviceRecord]
@@ -632,6 +805,7 @@ private struct DeviceDatabase: Codable {
         databaseDirectoryURL.appendingPathComponent("device-database.json")
     }
 }
+#endif
 
 private struct DeviceRecord: Codable {
     let id: String
