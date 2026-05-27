@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var isTransferring = false
     @State private var isRefreshingDevices = false
     @State private var isPollingDevices = false
+    @State private var isDropTargeted = false
     @State private var deviceMessage = "Connect your Android phone in File Transfer mode."
 
     private var readyItems: [TransferItem] {
@@ -214,26 +215,35 @@ struct ContentView: View {
                 .disabled(transferItems.isEmpty || isTransferring)
             }
 
-            if transferItems.isEmpty {
-                emptyQueue
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(transferItems) { item in
-                        TransferRow(item: item) {
-                            transferItems.removeAll { $0.id == item.id }
-                        }
-                        .disabled(isTransferring)
+            Group {
+                if transferItems.isEmpty {
+                    emptyQueue
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(transferItems) { item in
+                            TransferRow(item: item) {
+                                transferItems.removeAll { $0.id == item.id }
+                            }
+                            .disabled(isTransferring)
 
-                        if item.id != transferItems.last?.id {
-                            Divider()
+                            if item.id != transferItems.last?.id {
+                                Divider()
+                            }
                         }
                     }
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(.quaternary)
+                    )
                 }
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(.quaternary)
-                )
+            }
+            .overlay(dropHighlight)
+            .dropDestination(for: URL.self) { urls, _ in
+                addTransferItems(from: urls)
+                return true
+            } isTargeted: { isTargeted in
+                isDropTargeted = isTargeted
             }
         }
     }
@@ -246,6 +256,10 @@ struct ContentView: View {
 
             Text("No files selected")
                 .font(.headline)
+
+            Text("Drop files here or choose them from Finder.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
 
             Button {
                 isShowingFilePicker = true
@@ -262,9 +276,23 @@ struct ContentView: View {
         )
     }
 
+    private var dropHighlight: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .stroke(isDropTargeted ? Color.accentColor : Color.clear, lineWidth: 2)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isDropTargeted ? Color.accentColor.opacity(0.08) : Color.clear)
+            )
+            .allowsHitTesting(false)
+    }
+
     private func handleFileImport(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result else { return }
 
+        addTransferItems(from: urls)
+    }
+
+    private func addTransferItems(from urls: [URL]) {
         let importedItems = urls.map { url in
             TransferItem(
                 name: url.lastPathComponent,
