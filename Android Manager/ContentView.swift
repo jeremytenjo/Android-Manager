@@ -163,7 +163,6 @@ struct ContentView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    transferSummary
                     destinationPicker
                     fileQueue
                 }
@@ -181,14 +180,6 @@ struct ContentView: View {
                 endPoint: .bottomTrailing
             )
         )
-    }
-
-    private var transferSummary: some View {
-        HStack(spacing: 14) {
-            SummaryTile(title: "Device", value: selectedDevice?.name ?? "No device", icon: "iphone.gen3", tint: .green)
-            SummaryTile(title: "Files", value: "\(transferItems.count)", icon: "doc.on.doc", tint: .orange)
-            SummaryTile(title: "Total size", value: ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file), icon: "externaldrive", tint: .purple)
-        }
     }
 
     private var destinationPicker: some View {
