@@ -160,7 +160,7 @@ struct ContentView: View {
 
             Spacer()
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(.ultraThinMaterial)
     }
 
     private var transferWorkspace: some View {
@@ -177,7 +177,16 @@ struct ContentView: View {
                 .frame(maxWidth: 980, alignment: .topLeading)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .windowBackgroundColor),
+                    Color.accentColor.opacity(0.08)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
     }
 
     private var header: some View {
@@ -215,7 +224,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 18)
-        .background(.regularMaterial)
+        .liquidGlassPanel(cornerRadius: 0)
     }
 
     private var transferSummary: some View {
@@ -283,11 +292,7 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(.quaternary)
-                    )
+                    .liquidGlassPanel(cornerRadius: 12)
                 }
             }
             .overlay(dropHighlight)
@@ -321,11 +326,7 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, minHeight: 220)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.quaternary)
-        )
+        .liquidGlassPanel(cornerRadius: 12)
     }
 
     private var dropHighlight: some View {
@@ -1065,7 +1066,10 @@ private struct DeviceRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .liquidGlassPanel(
+            cornerRadius: 12,
+            fallbackFill: isSelected ? Color.accentColor.opacity(0.14) : Color.clear
+        )
         .padding(.horizontal, 10)
     }
 }
@@ -1098,11 +1102,7 @@ private struct SummaryTile: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 74)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.quaternary)
-        )
+        .liquidGlassPanel(cornerRadius: 12)
     }
 }
 
@@ -1178,6 +1178,23 @@ private struct TransferRow: View {
         }
 
         return "doc"
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func liquidGlassPanel(cornerRadius: CGFloat, fallbackFill: Color = Color(nsColor: .controlBackgroundColor)) -> some View {
+        if #available(macOS 26.0, *) {
+            self
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+        } else {
+            self
+                .background(fallbackFill, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(.quaternary)
+                )
+        }
     }
 }
 
