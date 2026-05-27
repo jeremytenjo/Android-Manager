@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var connectedDevices: [AndroidDevice] = []
     @State private var selectedDevice: AndroidDevice?
+    @State private var deviceDatabase = DeviceDatabase.load()
     @State private var destinationFolder = "Downloads"
     @State private var transferItems: [TransferItem] = []
     @State private var isShowingFilePicker = false
@@ -19,6 +20,9 @@ struct ContentView: View {
     @State private var isRefreshingDevices = false
     @State private var isPollingDevices = false
     @State private var isDropTargeted = false
+    @State private var isShowingRenameDevice = false
+    @State private var renamingDeviceID: String?
+    @State private var deviceNameDraft = ""
     @State private var deviceMessage = "Connect your Android phone in File Transfer mode."
 
     private var readyItems: [TransferItem] {
@@ -27,6 +31,10 @@ struct ContentView: View {
 
     private var totalSize: Int64 {
         transferItems.reduce(0) { $0 + $1.size }
+    }
+
+    private var displayedDevices: [AndroidDevice] {
+        orderedDevices(from: connectedDevices)
     }
 
     var body: some View {
@@ -49,6 +57,17 @@ struct ContentView: View {
         }
         .task {
             await startDevicePolling()
+        }
+        .alert("Rename Device", isPresented: $isShowingRenameDevice) {
+            TextField("Device name", text: $deviceNameDraft)
+
+            Button("Save") {
+                saveRenamedDevice()
+            }
+
+            Button("Cancel", role: .cancel) {
+                renamingDeviceID = nil
+            }
         }
     }
 
@@ -95,13 +114,42 @@ struct ContentView: View {
                     .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                     .padding(.horizontal, 10)
                 } else {
-                    ForEach(connectedDevices) { device in
-                        Button {
-                            selectedDevice = device
-                        } label: {
-                            DeviceRow(device: device, isSelected: selectedDevice?.id == device.id)
+                    ForEach(displayedDevices) { device in
+                        HStack(spacing: 4) {
+                            Button {
+                                selectDevice(device)
+                            } label: {
+                                DeviceRow(device: device, isSelected: selectedDevice?.id == device.id)
+                            }
+                            .buttonStyle(.plain)
+
+                            VStack(spacing: 4) {
+                                Button {
+                                    moveDevice(device, direction: .up)
+                                } label: {
+                                    Image(systemName: "chevron.up")
+                                }
+                                .disabled(device.id == displayedDevices.first?.id)
+                                .help("Move up")
+
+                                Button {
+                                    moveDevice(device, direction: .down)
+                                } label: {
+                                    Image(systemName: "chevron.down")
+                                }
+                                .disabled(device.id == displayedDevices.last?.id)
+                                .help("Move down")
+                            }
+                            .buttonStyle(.borderless)
+
+                            Button {
+                                beginRenaming(device)
+                            } label: {
+                                Image(systemName: "pencil")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Rename device")
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -341,11 +389,23 @@ struct ContentView: View {
     private func updateConnectedDevices() async {
         do {
             let devices = try await LibMTPTransferService.detectDevices()
-            let selectedDeviceID = selectedDevice?.id
+            let selectedDeviceID = selectedDevice?.id ?? deviceDatabase.selectedDeviceID
+            let didChangeDatabase = deviceDatabase.register(devices)
+            let orderedDevices = orderedDevices(from: devices)
+            let resolvedSelectedDevice = orderedDevices.first { $0.id == selectedDeviceID } ?? orderedDevices.first
+            let didChangeSelection = deviceDatabase.selectedDeviceID != resolvedSelectedDevice?.id
 
             connectedDevices = devices
-            selectedDevice = devices.first { $0.id == selectedDeviceID } ?? devices.first
+            selectedDevice = resolvedSelectedDevice
             deviceMessage = devices.isEmpty ? "No MTP devices found. Unlock your phone and set USB mode to File Transfer." : ""
+
+            if let selectedDevice {
+                deviceDatabase.selectedDeviceID = selectedDevice.id
+            }
+
+            if didChangeDatabase || didChangeSelection {
+                deviceDatabase.save()
+            }
         } catch {
             connectedDevices = []
             selectedDevice = nil
@@ -355,6 +415,49 @@ struct ContentView: View {
 
     private var destinationStatusText: String {
         "Ready to send with libmtp to \(destinationFolder)."
+    }
+
+    private func orderedDevices(from devices: [AndroidDevice]) -> [AndroidDevice] {
+        devices
+            .enumerated()
+            .map { index, device in
+                (index: index, device: device.renamed(to: deviceDatabase.customName(for: device.id)))
+            }
+            .sorted { lhs, rhs in
+                let lhsSortIndex = deviceDatabase.sortIndex(for: lhs.device.id) ?? (10_000 + lhs.index)
+                let rhsSortIndex = deviceDatabase.sortIndex(for: rhs.device.id) ?? (10_000 + rhs.index)
+
+                return lhsSortIndex == rhsSortIndex ? lhs.index < rhs.index : lhsSortIndex < rhsSortIndex
+            }
+            .map(\.device)
+    }
+
+    private func selectDevice(_ device: AndroidDevice) {
+        selectedDevice = device
+        deviceDatabase.selectedDeviceID = device.id
+        deviceDatabase.save()
+    }
+
+    private func beginRenaming(_ device: AndroidDevice) {
+        renamingDeviceID = device.id
+        deviceNameDraft = device.name
+        isShowingRenameDevice = true
+    }
+
+    private func saveRenamedDevice() {
+        guard let renamingDeviceID else { return }
+
+        deviceDatabase.renameDevice(id: renamingDeviceID, to: deviceNameDraft)
+        deviceDatabase.save()
+        selectedDevice = displayedDevices.first { $0.id == selectedDevice?.id }
+        self.renamingDeviceID = nil
+    }
+
+    private func moveDevice(_ device: AndroidDevice, direction: MoveDirection) {
+        let ids = displayedDevices.map(\.id)
+        deviceDatabase.moveDevice(id: device.id, direction: direction, orderedDeviceIDs: ids)
+        deviceDatabase.save()
+        selectedDevice = displayedDevices.first { $0.id == selectedDevice?.id }
     }
 
     private func startTransfer() async {
@@ -405,6 +508,135 @@ private struct AndroidDevice: Identifiable, Hashable {
     static let sampleDevices = [
         AndroidDevice(id: "preview-device", name: "Galaxy A54 5G", model: "MTP connected", batteryLevel: nil, isConnected: true)
     ]
+
+    func renamed(to customName: String?) -> AndroidDevice {
+        guard let customName, !customName.isEmpty else {
+            return self
+        }
+
+        return AndroidDevice(
+            id: id,
+            name: customName,
+            model: model,
+            batteryLevel: batteryLevel,
+            isConnected: isConnected
+        )
+    }
+}
+
+private enum MoveDirection {
+    case up
+    case down
+}
+
+private struct DeviceDatabase: Codable {
+    var selectedDeviceID: String?
+    var devices: [DeviceRecord]
+
+    static func load() -> DeviceDatabase {
+        do {
+            let data = try Data(contentsOf: databaseURL)
+            return try JSONDecoder().decode(DeviceDatabase.self, from: data)
+        } catch {
+            return DeviceDatabase(selectedDeviceID: nil, devices: [])
+        }
+    }
+
+    mutating func register(_ detectedDevices: [AndroidDevice]) -> Bool {
+        var didChange = false
+        var nextSortIndex = (devices.map(\.sortIndex).max() ?? -1) + 1
+
+        for device in detectedDevices where recordIndex(for: device.id) == nil {
+            devices.append(DeviceRecord(id: device.id, customName: nil, sortIndex: nextSortIndex))
+            nextSortIndex += 1
+            didChange = true
+        }
+
+        return didChange
+    }
+
+    func customName(for deviceID: String) -> String? {
+        devices.first { $0.id == deviceID }?.customName
+    }
+
+    func sortIndex(for deviceID: String) -> Int? {
+        devices.first { $0.id == deviceID }?.sortIndex
+    }
+
+    mutating func renameDevice(id: String, to name: String) {
+        ensureRecordExists(for: id)
+
+        guard let index = recordIndex(for: id) else { return }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        devices[index].customName = trimmedName.isEmpty ? nil : trimmedName
+    }
+
+    mutating func moveDevice(id: String, direction: MoveDirection, orderedDeviceIDs: [String]) {
+        guard let currentIndex = orderedDeviceIDs.firstIndex(of: id) else { return }
+
+        let destinationIndex: Int
+        switch direction {
+        case .up:
+            destinationIndex = max(orderedDeviceIDs.startIndex, currentIndex - 1)
+        case .down:
+            destinationIndex = min(orderedDeviceIDs.index(before: orderedDeviceIDs.endIndex), currentIndex + 1)
+        }
+
+        guard currentIndex != destinationIndex else { return }
+
+        var reorderedIDs = orderedDeviceIDs
+        let movedID = reorderedIDs.remove(at: currentIndex)
+        reorderedIDs.insert(movedID, at: destinationIndex)
+
+        for (sortIndex, deviceID) in reorderedIDs.enumerated() {
+            ensureRecordExists(for: deviceID)
+
+            if let recordIndex = recordIndex(for: deviceID) {
+                devices[recordIndex].sortIndex = sortIndex
+            }
+        }
+    }
+
+    func save() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(self)
+            try FileManager.default.createDirectory(at: Self.databaseDirectoryURL, withIntermediateDirectories: true)
+            try data.write(to: Self.databaseURL, options: [.atomic])
+        } catch {
+            assertionFailure("Failed to save device database: \(error.localizedDescription)")
+        }
+    }
+
+    private mutating func ensureRecordExists(for id: String) {
+        guard recordIndex(for: id) == nil else { return }
+
+        let nextSortIndex = (devices.map(\.sortIndex).max() ?? -1) + 1
+        devices.append(DeviceRecord(id: id, customName: nil, sortIndex: nextSortIndex))
+    }
+
+    private func recordIndex(for id: String) -> Int? {
+        devices.firstIndex { $0.id == id }
+    }
+
+    private static var databaseDirectoryURL: URL {
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
+
+        return baseURL.appendingPathComponent("Android Manager", isDirectory: true)
+    }
+
+    private static var databaseURL: URL {
+        databaseDirectoryURL.appendingPathComponent("device-database.json")
+    }
+}
+
+private struct DeviceRecord: Codable {
+    let id: String
+    var customName: String?
+    var sortIndex: Int
 }
 
 private struct TransferItem: Identifiable {
