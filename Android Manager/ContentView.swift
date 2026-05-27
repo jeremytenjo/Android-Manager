@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var isShowingFilePicker = false
     @State private var isTransferring = false
     @State private var isRefreshingDevices = false
+    @State private var isPollingDevices = false
     @State private var deviceMessage = "Connect your Android phone in File Transfer mode."
 
     private var readyItems: [TransferItem] {
@@ -46,7 +47,7 @@ struct ContentView: View {
             handleFileImport(result)
         }
         .task {
-            await refreshConnectedDevices()
+            await startDevicePolling()
         }
     }
 
@@ -287,10 +288,35 @@ struct ContentView: View {
         isRefreshingDevices = true
         defer { isRefreshingDevices = false }
 
+        await updateConnectedDevices()
+    }
+
+    private func startDevicePolling() async {
+        guard !isPollingDevices else { return }
+
+        isPollingDevices = true
+        defer { isPollingDevices = false }
+
+        await updateConnectedDevices()
+
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(4))
+
+            guard !isTransferring else {
+                continue
+            }
+
+            await updateConnectedDevices()
+        }
+    }
+
+    private func updateConnectedDevices() async {
         do {
             let devices = try await LibMTPTransferService.detectDevices()
+            let selectedDeviceID = selectedDevice?.id
+
             connectedDevices = devices
-            selectedDevice = devices.first
+            selectedDevice = devices.first { $0.id == selectedDeviceID } ?? devices.first
             deviceMessage = devices.isEmpty ? "No MTP devices found. Unlock your phone and set USB mode to File Transfer." : ""
         } catch {
             connectedDevices = []
