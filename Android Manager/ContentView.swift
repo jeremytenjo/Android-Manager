@@ -282,12 +282,6 @@ struct ContentView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            Button {
-                isShowingFilePicker = true
-            } label: {
-                Label("Choose Files", systemImage: "folder")
-            }
-            .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, minHeight: 220)
         .liquidGlassPanel(cornerRadius: 12)
